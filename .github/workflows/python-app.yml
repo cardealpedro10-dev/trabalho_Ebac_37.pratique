@@ -1,0 +1,77 @@
+name: CI/CD Pipeline - FastAPI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+env:
+  IMAGE_NAME: fastapi-app
+  IMAGE_TAG: latest
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout do código
+      uses: actions/checkout@v4
+
+    - name: Configurar o Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Instalar o Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Carregar cache das dependências
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          venv-${{ runner.os }}-
+
+    - name: Instalar dependências da aplicação
+      run: poetry install --no-interaction --no-root
+
+    - name: Executar testes automatizados (Pytest)
+      run: poetry run pytest
+
+    - name: Configurar Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Cache de camadas do Docker
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
+    - name: Construir imagem Docker da aplicação
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: false
+        load: true
+        tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+        cache-from: type=local,src=/tmp/.buildx-cache
+        cache-to: type=local,dest=/tmp/.buildx-cache,mode=max
+
+    - name: Executar Smoke Test (Validação do Container)
+      run: |
+        docker run -d --name test-container -p 8000:8000 ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+        sleep 5
+        curl --fail --retry 5 --retry-connrefused --retry-delay 2 http://localhost:8000/ || exit 1
+        docker stop test-container
+        docker rm test-container
+
+ 
